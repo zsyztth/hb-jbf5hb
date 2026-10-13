@@ -300,6 +300,8 @@ body{
 }
 .chip:active{transform:scale(.9)}
 .chip.off{opacity:.42}
+.chip.attn{border-color:rgba(255,215,110,.8);color:var(--gold);animation:chipPulse 1.9s ease-out infinite}
+@keyframes chipPulse{0%{box-shadow:0 0 0 0 rgba(255,215,110,.5)}70%,100%{box-shadow:0 0 0 12px rgba(255,215,110,0)}}
 
 /* 灵敏度面板 */
 .panel{
@@ -374,7 +376,7 @@ body{
     <h1 class="cover-title" id="coverTitle">有一份礼物<br>只属于你</h1>
     <p class="cover-sub" id="coverSub">轻触，开启你的专属今天</p>
     <button class="open-btn" id="openBtn">拆 开 礼 物</button>
-    <p class="hint">建议戴上耳机 · 打开声音</p>
+    <p class="hint" id="musicHint">点一下屏幕 · 音乐就开 🎵</p>
   </section>
 
   <!-- 场景 2 -->
@@ -819,9 +821,16 @@ function openAll(){
 
 /* ============================================================
    音乐
+   浏览器规则：没有用户交互前不允许"出声播放"。
+   所以这里能抢跑就抢跑（回访/桌面浏览器多半直接放），
+   抢不到时任意一次触摸/点击都会立刻续上，不用专门去点 ♪。
    ============================================================ */
 const bgm = $('#bgm');
-let musicWanted = !!CONFIG.music;
+const musicChip = $('#musicBtn');
+const musicHint = $('#musicHint');
+const hintIdle = musicHint ? musicHint.textContent : '';
+let musicOn = false, musicStarted = false;
+
 if(CONFIG.music){
   bgm.src = /^data:/i.test(CONFIG.music)
     ? CONFIG.music
@@ -829,23 +838,47 @@ if(CONFIG.music){
   bgm.volume = CONFIG.musicVolume ?? .6;
   bgm.load();
   bgm.addEventListener('error', () => {
-    $('#musicBtn').classList.add('off');
-    showWxTip('音乐加载失败：请确认 <b>' + CONFIG.music + '</b> 与 index.html 放在同一个文件夹里');
+    musicChip.classList.add('off');
+    showWxTip('音乐加载失败：请确认 <b>' + CONFIG.music + '</b> 与页面放在同一个目录');
   });
-} else { $('#musicBtn').classList.add('off'); }
+} else { musicChip.classList.add('off'); }
 
-function playMusic(){
-  if(!CONFIG.music) return;
-  const p = bgm.play();
-  if(p && p.catch) p.catch(() => { $('#musicBtn').classList.add('off'); });
-  else $('#musicBtn').classList.remove('off');
+function paintMusic(){
+  musicChip.classList.toggle('off', !musicOn);
+  musicChip.classList.toggle('attn', !!CONFIG.music && !musicStarted);   // 还没出声就一直轻轻呼吸提示
+  if(musicHint) musicHint.textContent = !CONFIG.music ? hintIdle
+    : musicOn ? '音乐播放中 ♪'
+    : musicStarted ? '音乐已暂停 · 点右上角 ♪ 继续'
+    : '点一下屏幕 · 音乐就开 🎵';
 }
-bgm.addEventListener('playing', () => $('#musicBtn').classList.remove('off'));
-bgm.addEventListener('pause',   () => $('#musicBtn').classList.add('off'));
-$('#musicBtn').addEventListener('click', () => {
+function playMusic(){
+  if(!CONFIG.music || !bgm.paused) return;
+  const p = bgm.play();
+  if(p && p.catch) p.catch(() => { musicOn = false; paintMusic(); });
+}
+function pauseMusic(){ bgm.pause(); musicOn = false; paintMusic(); }
+
+bgm.addEventListener('playing', () => { musicOn = true; musicStarted = true; paintMusic(); });
+bgm.addEventListener('pause',   () => { musicOn = false; paintMusic(); });
+
+(function autoplay(){
+  playMusic();                                                        // 首屏先试一次
+  window.addEventListener('load', playMusic);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) playMusic(); });
+  document.addEventListener('WeixinJSBridgeReady', playMusic, false); // 微信内置浏览器放行通道
+  if(typeof WeixinJSBridge !== 'undefined') playMusic();
+  const kick = e => {
+    if(!musicStarted && e && e.target && e.target.closest && e.target.closest('#musicBtn')) return;
+    if(!musicStarted) playMusic();                                    // 任意一次交互立刻补播
+  };
+  ['pointerdown','touchstart','mousedown','keydown','click'].forEach(ev =>
+    document.addEventListener(ev, kick, {capture:true, passive:true}));
+})();
+paintMusic();
+
+musicChip.addEventListener('click', () => {
   if(!CONFIG.music){ showWxTip('还没设置音乐：把 mp3 放到同目录，在 CONFIG.music 里填文件名即可'); return; }
-  if(bgm.paused){ bgm.play().catch(()=>{}); $('#musicBtn').classList.remove('off'); }
-  else { bgm.pause(); $('#musicBtn').classList.add('off'); }
+  if(bgm.paused || !musicOn) playMusic(); else pauseMusic();
 });
 
 /* 设置面板 */
